@@ -100,20 +100,19 @@ ROOT::RDF::RNode getReweightedDF(ROOT::RDF::RNode df, Params* params, std::vecto
   auto df_shift = getShiftedDF(df, params);
   auto df_sel = getSelectedDF(df_shift);
   auto df_norm_weighted = getNormWeightedDF(df_sel, params);
+
   auto df_spline_weighted = getSplineWeightedDF(df_norm_weighted, splines_copies[0], binEdges, params, "spline_weight_0");
   for (size_t i = 1; i < splines_copies.size(); ++i) {
     df_spline_weighted = getSplineWeightedDF(df_spline_weighted, splines_copies[i], binEdges, params, "spline_weight_" + std::to_string(i));
   }
+
+  // string that encodes multiplying all of the spline weights
   std::string multiply_string = "spline_weight_0";
   for (size_t i = 1; i < splines_copies.size(); ++i) {
     multiply_string += " * spline_weight_" + std::to_string(i);
   }
+
   return df_spline_weighted.Define("evt_weight", "norm_weight * " + multiply_string);
-  //return df_spline_weighted.Define("evt_weight",[]( float norm_weight, float spline_weight) -> float { return norm_weight * spline_weight; }, {"norm_weight", "spline_weight"});
-  //auto df_shift = df.Define("ELep_shift", [](float ELep) -> float { return ELep; }, {"ELep"});
-  //return df_sel.Define("evt_weight", []() -> float { return 1.0; });
-  //return df_shift.Define("evt_weight", "1.0f");
-  //return df_norm_weighted.Define("evt_weight", [](float norm_weight) -> float { return norm_weight; }, {"norm_weight"});
 }
 
 ROOT::RDF::RResultPtr<TH1D> getHist(ROOT::RDF::RNode df) {
@@ -124,18 +123,11 @@ ROOT::RDF::RResultPtr<TH1D> getHist(ROOT::RDF::RNode df) {
     "ELep_shift",
     "evt_weight"
   );
-  // return df.Histo1D<float, float>(
-  //   {"hELep", "ELep;ELep [GeV];Events", 1, 0., 10.},
-  //   "ELep_shift",
-  //   "evt_weight"
-  // );
 }
 
 ROOT::RDF::RNode readDF(char const *filename, char const *ntuplename, std::vector<std::string> columns) {
   ROOT::RDataFrame df(ntuplename, filename); 
-  auto df_cached = df.Cache<float, float, float>(columns); // loads specified columns into memory
-  //auto df_cached = df.Cache(columns); // loads specified columns into memory
-  //auto df_cached = df;
+  auto df_cached = df.Cache<float, float, float>(columns); // loads specified columns into memory, yes this is hardcoded for just the 3 columns
   return df_cached.Define("RecoEnu", [](float Enu_true) -> float { return Enu_true; }, {"Enu_true"}); // create RecoEnu columns as copy of Enu_true
 }
 
@@ -146,7 +138,7 @@ int main(int argc, char const *argv[])
       return 1;
   }
   
-  //ROOT::EnableImplicitMT(4);
+  ROOT::EnableImplicitMT(8);
   
   auto df = readDF(argv[1], "Events", {"Enu_true", "ELep", "Q2"});
   df.Describe().Print();
@@ -154,8 +146,10 @@ int main(int argc, char const *argv[])
   auto splines = getSplines(argv[2]);
   auto spline_binning = getSplineBinning(argv[2]);
 
+  // copy the splines so we can increase the running time/complexity
+  // a real analysis will have O(100) splines
   std::vector<std::vector<TSpline3*>> splines_copies;
-  for (int i = 0; i < 1; ++i) {
+  for (int i = 0; i < 100; ++i) {
     std::vector<TSpline3*> splines_copy;
     for (auto* s : splines) {
       splines_copy.push_back(static_cast<TSpline3*>(s->Clone()));
@@ -163,7 +157,8 @@ int main(int argc, char const *argv[])
     splines_copies.push_back(splines_copy);
   }
 
-  int n_trials = 1000;
+  // number of times to loop over the graph with different parameters, equivalent to number of faked MCMC steps
+  int n_trials = 100; 
   auto random_params = getRandomParams(n_trials);
 
   Params* current_params = &random_params[0];
